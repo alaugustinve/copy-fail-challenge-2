@@ -1,4 +1,4 @@
-[1:04 AM, 5/25/2026] Jorge: #!/usr/bin/env bash
+#!/usr/bin/env bash
 # scripts/02_build_rootfs.sh
 # Construye el initramfs de la prueba + Inyección del Exploit en C + Interfaz Gráfica ASCII
 set -euo pipefail
