@@ -5,21 +5,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUSYBOX_SRC="$WORKSPACE_ROOT/kernel/busybox"
-INITRAMFS_DIR="$WORKSPACE_ROOT/kernel/initramfs"
 BUILD_DIR="$WORKSPACE_ROOT/kernel/build"
-
 
 BZIMAGE="$BUILD_DIR/bzImage_vuln"
 INITRAMFS="$BUILD_DIR/initramfs.cpio.gz"
 
-# ID del estudiante para el hostname de la VM (anti-copia)
 STUDENT_ID="${STUDENT_ID:-$(git config user.name 2>/dev/null | tr ' ' '-' | tr -cd '[:alnum:]-' | head -c 16)}"
 STUDENT_ID="${STUDENT_ID:-unknown}"
 
 RED='\033[1;31m'
 GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
 CYAN='\033[1;36m'
 NC='\033[0m'
 
@@ -47,7 +42,7 @@ exec qemu-system-x86_64 \
   -no-reboot \
   -kernel "$BZIMAGE" \
   -initrd "$INITRAMFS" \
-  -append "console=ttyS0 quiet STUDENT_ID=${STUDENT_ID}" \
+  -append "console=ttyS0 quiet STUDENT_ID=${STUDENT_ID} init=/init" \
   -m 512M \
   -smp "$(nproc)" \
   -enable-kvm 2>/dev/null || \
@@ -56,6 +51,6 @@ qemu-system-x86_64 \
   -no-reboot \
   -kernel "$BZIMAGE" \
   -initrd "$INITRAMFS" \
-  -append "console=ttyS0 quiet STUDENT_ID=${STUDENT_ID}" \
+  -append "console=ttyS0 quiet STUDENT_ID=${STUDENT_ID} init=/init" \
   -m 512M \
   -smp 2

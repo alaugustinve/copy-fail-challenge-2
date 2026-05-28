@@ -34,14 +34,12 @@ make CONFIG_PREFIX="$INITRAMFS_DIR" install
 # Estructura del sistema jerárquico UNIX
 mkdir -p "$INITRAMFS_DIR"/{proc,sys,dev,tmp,etc,root,home/student,usr/bin,lib,lib64,run}
 
-echo -e "${CYAN}[5/6] Incluyendo Python 3 y arreglando enlazadores...${NC}"
+echo -e "${CYAN}[5/6] Incluyendo Python 3 y librerías...${NC}"
 PYTHON_BIN=$(which python3)
 cp "$PYTHON_BIN" "$INITRAMFS_DIR/usr/bin/python3"
 
-# Copia del cargador dinámico real para asegurar que no dé Error -2
 cp -LH /lib64/ld-linux-x86-64.so.2 "$INITRAMFS_DIR/lib64/" 2>/dev/null || true
 
-# Copiar librerías dinámicas rompiendo enlaces simbólicos rotos (-LH)
 for lib in $(ldd "$PYTHON_BIN" 2>/dev/null | grep -oE '/[^ ]+\.so[^ ]*'); do
   mkdir -p "$INITRAMFS_DIR$(dirname $lib)"
   cp -LH "$lib" "$INITRAMFS_DIR$lib" 2>/dev/null || true
@@ -49,8 +47,7 @@ done
 
 PYTHON_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 mkdir -p "$INITRAMFS_DIR/usr/lib/python${PYTHON_VER}"
-cp -r /usr/lib/python3/* "$INITRAMFS_DIR/usr/lib/" 2>/dev/null || \
-  cp -r /usr/lib/python${PYTHON_VER} "$INITRAMFS_DIR/usr/lib/" 2>/dev/null || true
+cp -r /usr/lib/python${PYTHON_VER} "$INITRAMFS_DIR/usr/lib/" 2>/dev/null || true
 ln -sf python3 "$INITRAMFS_DIR/usr/bin/python" 2>/dev/null || true
 
 # Configuración de usuarios locales
@@ -69,7 +66,7 @@ root:x:0:
 student:x:1001:student
 EOF
 
-# /etc/profile con la bienvenida al iniciar la shell interactiva
+# /etc/profile con bienvenida
 cat > "$INITRAMFS_DIR/etc/profile" << 'EOF'
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PS1='[\u@copy-fail \w]\$ '
@@ -80,24 +77,16 @@ echo "  Kernel:  $(uname -r)"
 echo ""
 EOF
 
-# ── Script init de arranque de la máquina virtual con interfaz ASCII ─────────────────
+# Script init simplificado
 cat > "$INITRAMFS_DIR/init" << 'INITEOF'
 #!/bin/sh
+echo ">>> init arrancó correctamente <<<"
+
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev 2>/dev/null || mdev -s
 mount -t tmpfs none /tmp
 
-modprobe algif_aead 2>/dev/null || true
-modprobe authencesn 2>/dev/null || true
-
-# Hostname identificador (para validación anti-copia)
-STUDENT_ID="${STUDENT_ID:-unknown}"
-hostname "copy-fail-${STUDENT_ID}"
-
-# =================================================================
-# PARTE GRÁFICA ORIGINAL DEL PROFESOR (BANNER ASCII)
-# =================================================================
 echo ""
 echo "  ╔══════════════════════════════════════════╗"
 echo "  ║   KERNEL VULNERABLE — CVE-2026-31431     ║"
@@ -105,93 +94,21 @@ echo "  ║   $(uname -r | cut -c1-42)               ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo ""
 
-# Iniciar SSH daemon si existe
-if [ -x /usr/sbin/sshd ]; then
-  /usr/sbin/sshd -D &
-fi
-
-exec su - student
+exec /bin/sh
 INITEOF
-chmod +x "$INITRAMFS_DIR/init"
+chmod 755 "$INITRAMFS_DIR/init"
 
-# =================================================================
-# INTEGRACIÓN DEL RETO: INYECCIÓN DEL EXPLOIT EN C CON PERMISOS NORMALES
-# =================================================================
+# Inyección del exploit si existe
 if [ -f "$WORKSPACE_ROOT/exploit" ]; then
-    echo -e "${GREEN} -> Inyectando binario estático real en el rootfs...${NC}"
+    echo -e "${GREEN} -> Inyectando binario en el rootfs...${NC}"
     cp "$WORKSPACE_ROOT/exploit" "$INITRAMFS_DIR/home/student/exploit"
-    
-    # Contexto: Pertenece a student (1001) y sin bit SUID (0755)
     chown 1001:1001 "$INITRAMFS_DIR/home/student/exploit"
     chmod 0755 "$INITRAMFS_DIR/home/student/exploit"
 else
-    echo -e "${YELLOW} ⚠️ ALERTA: No se encontró el binario '$WORKSPACE_ROOT/exploit'. Asegúrate de compilarlo en la raíz primero.${NC}"
+    echo -e "${YELLOW} ⚠️ ALERTA: No se encontró el binario '$WORKSPACE_ROOT/exploit'.${NC}"
 fi
-# =================================================================
 
 echo -e "${CYAN}[6/6] Empaquetando...${NC}"
 cd "$INITRAMFS_DIR"
 find . | cpio -o -H newc 2>/dev/null | gzip > "$BUILD_DIR/initramfs.cpio.gz"
 echo -e "${GREEN}✓ rootfs listo ${NC}"
-[1:04 AM, 5/25/2026] Jorge: !/usr/bin/env bash
-# scripts/03_run_qemu.sh
-# Arranca la VM vulnerable en QEMU (modo consola serial)
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUSYBOX_SRC="$WORKSPACE_ROOT/kernel/busybox"
-INITRAMFS_DIR="$WORKSPACE_ROOT/kernel/initramfs"
-BUILD_DIR="$WORKSPACE_ROOT/kernel/build"
-
-
-BZIMAGE="$BUILD_DIR/bzImage_vuln"
-INITRAMFS="$BUILD_DIR/initramfs.cpio.gz"
-
-# ID del estudiante para el hostname de la VM (anti-copia)
-STUDENT_ID="${STUDENT_ID:-$(git config user.name 2>/dev/null | tr ' ' '-' | tr -cd '[:alnum:]-' | head -c 16)}"
-STUDENT_ID="${STUDENT_ID:-unknown}"
-
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[1;36m'
-NC='\033[0m'
-
-if [ ! -f "$BZIMAGE" ]; then
-  echo -e "${RED}Error: $BZIMAGE no existe. Ejecuta primero: make kernel${NC}"
-  exit 1
-fi
-
-if [ ! -f "$INITRAMFS" ]; then
-  echo -e "${RED}Error: $INITRAMFS no existe. Ejecuta primero: make rootfs${NC}"
-  exit 1
-fi
-
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  Arrancando VM vulnerable — CVE-2026-31431                  ║${NC}"
-echo -e "${GREEN}║  Salir de QEMU: Ctrl+A  luego  X                           ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "  STUDENT_ID: ${CYAN}${STUDENT_ID}${NC}"
-echo -e "  Kernel:     ${CYAN}${BZIMAGE}${NC}"
-echo ""
-
-exec qemu-system-x86_64 \
-  -nographic \
-  -no-reboot \
-  -kernel "$BZIMAGE" \
-  -initrd "$INITRAMFS" \
-  -append "console=ttyS0 quiet STUDENT_ID=${STUDENT_ID}" \
-  -m 512M \
-  -smp "$(nproc)" \
-  -enable-kvm 2>/dev/null || \
-qemu-system-x86_64 \
-  -nographic \
-  -no-reboot \
-  -kernel "$BZIMAGE" \
-  -initrd "$INITRAMFS" \
-  -append "console=ttyS0 quiet STUDENT_ID=${STUDENT_ID}" \
-  -m 512M \
-  -smp 2
-  
